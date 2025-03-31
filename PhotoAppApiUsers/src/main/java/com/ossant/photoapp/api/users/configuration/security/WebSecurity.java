@@ -1,10 +1,13 @@
 package com.ossant.photoapp.api.users.configuration.security;
 
+import com.ossant.photoapp.api.users.security.AuthenticationFilter;
+import com.ossant.photoapp.api.users.service.UsersService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -21,10 +24,12 @@ public class WebSecurity {
 
     private final Environment environment;
 
+    private final UsersService usersService;
+
     @Autowired
-    public WebSecurity(Environment environment) {
+    public WebSecurity(Environment environment, UsersService usersService) {
         this.environment = environment;
-        System.out.println("API GATEWAY IP Environment = " + environment.getProperty("gateway.ip"));
+        this.usersService = usersService;
     }
 
     @Bean
@@ -34,16 +39,32 @@ public class WebSecurity {
 
     @Bean
     protected SecurityFilterChain configure(HttpSecurity http) throws Exception {
+
+        AuthenticationManagerBuilder authenticationManagerBuilder =
+                http.getSharedObject(AuthenticationManagerBuilder.class);
+
+        authenticationManagerBuilder.userDetailsService(usersService)
+                .passwordEncoder(bCryptPasswordEncoder());
+
+        AuthenticationManager authenticationManager = authenticationManagerBuilder.build();
+
+        AuthenticationFilter authenticationFilter =
+                new AuthenticationFilter(authenticationManager, usersService, environment);
+
+        authenticationFilter.setFilterProcessesUrl(environment.getProperty("login.url.path"));
+
         return http
-                    .csrf(AbstractHttpConfigurer::disable)
-                    .sessionManagement((session) ->
-                            session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                    .headers((headers) ->
-                            headers.frameOptions(HeadersConfigurer.FrameOptionsConfig::sameOrigin))
-                    .authorizeHttpRequests((authorizationRequest) -> authorizationRequest
-                            .requestMatchers(new AntPathRequestMatcher("/users"))
-                                .access(new WebExpressionAuthorizationManager("hasIpAddress('"+environment.getProperty("gateway.ip")+"')"))
-                            .requestMatchers(new AntPathRequestMatcher("/h2-console/**")).permitAll())
-                    .build();
+                .csrf(AbstractHttpConfigurer::disable)
+                .sessionManagement((session) ->
+                        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .headers((headers) ->
+                        headers.frameOptions(HeadersConfigurer.FrameOptionsConfig::sameOrigin))
+                .authorizeHttpRequests((authorizationRequest) -> authorizationRequest
+                        .requestMatchers(new AntPathRequestMatcher("/users"))
+                        .access(new WebExpressionAuthorizationManager("hasIpAddress('" + environment.getProperty("gateway.ip") + "')"))
+                        .requestMatchers(new AntPathRequestMatcher("/h2-console/**")).permitAll())
+                .addFilter(authenticationFilter)
+                .authenticationManager(authenticationManager)
+                .build();
     }
 }
